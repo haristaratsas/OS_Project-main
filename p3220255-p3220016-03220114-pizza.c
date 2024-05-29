@@ -11,6 +11,10 @@ int total_pizzas_p = 0;
 int total_pizzas_s = 0;
 int total_success_orders = 0;
 int total_failed_orders = 0;
+int total_service_time = 0;
+int max_service_time = 0;
+int total_cooling_time = 0;
+int max_cooling_time = 0;
 
 struct timespec custOnHold;
 struct timespec custOnHoldT;
@@ -23,7 +27,7 @@ pthread_mutex_t oven_mutex;
 pthread_cond_t oven_cond;
 pthread_mutex_t deliverer_mutex; 
 pthread_cond_t deliverer_cond; 
-pthread_mutex_t revenue_mutex;
+pthread_mutex_t completed_orders_mutex;
 pthread_mutex_t screen_mutex;
 
 
@@ -31,6 +35,8 @@ void* pizza_order(void* arg) {
     Order* order = (Order*)arg;
     int order_id = order->id;
     int num_pizzas = order->num_pizzas;
+    int service_time = 0;
+    int cooling_time = 0;
 
     // Telephone
     pthread_mutex_lock(&tel_mutex);
@@ -61,15 +67,14 @@ void* pizza_order(void* arg) {
         pthread_cond_signal(&tel_cond);
         pthread_mutex_unlock(&tel_mutex);
 
-        pthread_mutex_lock(&revenue_mutex);
+        pthread_mutex_lock(&completed_orders_mutex);
         total_failed_orders++;
-        pthread_mutex_unlock(&revenue_mutex);
+        pthread_mutex_unlock(&completed_orders_mutex);
 
-        free(order);
         return NULL;
     }
 
-    pthread_mutex_lock(&revenue_mutex);
+    pthread_mutex_lock(&completed_orders_mutex);
     for (int i = 0; i < num_pizzas; i++) {
         int pizza_type = rand_r(&seed) % 100;
         if (pizza_type < Pm ) {
@@ -83,7 +88,7 @@ void* pizza_order(void* arg) {
             total_pizzas_s++;
         }
     }
-    pthread_mutex_unlock(&revenue_mutex);
+    pthread_mutex_unlock(&completed_orders_mutex);
 
     pthread_mutex_lock(&screen_mutex);
     printf("Order %d placed.\n", order_id);
@@ -145,13 +150,28 @@ void* pizza_order(void* arg) {
     int delivery_time = rand_r(&seed) % (Tdelhigh - Tdellow) + Tdellow + 1;
     sleep(delivery_time);
 
+    service_time = order_to_packaging_time + delivery_time;
+    total_service_time += service_time;
+
+    if(service_time > max_service_time) {
+        max_service_time = service_time;
+    }
+
+    cooling_time = Tpack + delivery_time;
+    total_cooling_time += cooling_time;
+
+    if(cooling_time > max_cooling_time) {
+        max_cooling_time = cooling_time;
+    }
+
+
     pthread_mutex_lock(&screen_mutex);
     printf("Order %d delivered in %d minutes.\n", order_id, delivery_time + payment_time + num_pizzas * (Tprep + Tprep)+ Tbake);
     pthread_mutex_unlock(&screen_mutex);
 
-    pthread_mutex_lock(&revenue_mutex);
+    pthread_mutex_lock(&completed_orders_mutex);
     total_success_orders++;
-    pthread_mutex_unlock(&revenue_mutex);
+    pthread_mutex_unlock(&completed_orders_mutex);
 
     sleep(delivery_time);
 
@@ -160,9 +180,11 @@ void* pizza_order(void* arg) {
     pthread_cond_signal(&deliverer_cond);
     pthread_mutex_unlock(&deliverer_mutex);
 
-    free(order);
     return NULL;
 }
+
+
+
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         printf("Enter the number of orders and the seed properly\n");
@@ -183,20 +205,34 @@ int main(int argc, char *argv[]) {
 
         int order_time = rand_r(&seed) % (Torderhigh - Torderlow) + Torderlow + 1;
         sleep(order_time);
+        free(order);
     }
 
     for (int i = 0; i < Ncust; i++) {
         pthread_join(threads[i], NULL);
     }
 
-    int mutex_destroy = pthread_mutex_destroy(&tel_mutex);
     
 
     pthread_mutex_lock(&screen_mutex);
     printf("Total Revenue: %d euros\n", total_revenue);
     printf("Margarita: %d, Peperoni: %d, Special: %d\n", total_pizzas_m, total_pizzas_p, total_pizzas_s);
-    printf("Completed Orders: %d, Failed Orders: %d\n", total_success_orders, total_failed_orders);
+    printf("Completed Orders: %d, Failed Orders: %d\n", total_success_orders/Ncust, total_failed_orders);
+    printf("Total Service Time: %d minutes, Max Service Time: %d minutes\n", total_service_time/Ncust, max_service_time);
     pthread_mutex_unlock(&screen_mutex);
+
+
+    pthread_mutex_destroy(&tel_mutex);
+    pthread_mutex_destroy(&screen_mutex);
+    pthread_mutex_destroy(&cook_mutex);
+    pthread_mutex_destroy(&oven_mutex);
+    pthread_mutex_destroy(&deliverer_mutex);
+    pthread_mutex_destroy(&completed_orders_mutex);
+
+    pthread_cond_destroy(&tel_cond);
+    pthread_cond_destroy(&cook_cond);
+    pthread_cond_destroy(&oven_cond);
+    pthread_cond_destroy(&deliverer_cond);
 
     return 0;
 }
